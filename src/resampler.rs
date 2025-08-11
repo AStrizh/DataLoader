@@ -32,16 +32,18 @@ pub fn downsample_to_5min(df: &DataFrame) -> Result<DataFrame> {
                 .cast(DataType::Datetime(TimeUnit::Milliseconds, None))
                 .alias("ts"),
         )
-        .groupby_dynamic(
-            ["ts"],
+        .group_by_dynamic(
+            col("ts"),
+            [],
             DynamicGroupOptions {
                 every: Duration::parse("5m"),
                 period: Duration::parse("5m"),
                 offset: Duration::parse("0s"),
-                truncate: true,
+                label: Label::Left,
                 include_boundaries: false,
                 closed_window: ClosedWindow::Left,
                 start_by: StartBy::WindowBound,
+                ..Default::default()
             },
         )
         .agg([
@@ -51,7 +53,7 @@ pub fn downsample_to_5min(df: &DataFrame) -> Result<DataFrame> {
             col("close").last().alias("close"),
             col("volume").sum().alias("volume"),
         ])
-        .sort("ts", SortOptions::default())
+        .sort(["ts"], SortMultipleOptions::default())
         .collect()?;
 
     Ok(grouped)
