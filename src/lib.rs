@@ -3,3 +3,4 @@ pub mod resampler;
 pub mod indicators;
 pub mod stitcher;
 pub mod storage;
+mod integration;

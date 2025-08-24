@@ -105,7 +105,7 @@ fn rma_grouped(values: &[f64], period: usize, keys: &[i64]) -> Vec<f64> {
 fn calc_triple_ema(close: &[f64], keys: &[i64]) -> Vec<Series> {
     [9usize, 14, 21]
         .iter()
-        .map(|&p| Series::new(format!("ema_{p}").as_str(), ema_grouped(close, p, keys)))
+        .map(|&p| Series::new(PlSmallStr::from(format!("ema_{p}").as_str()), ema_grouped(close, p, keys)))
         .collect()
 }
 
@@ -125,7 +125,7 @@ fn calc_rsi(close: &[f64], keys: &[i64]) -> (Series, Series) {
     let avg_gain_rma = rma_grouped(&gains, 14, keys);
     let avg_loss_rma = rma_grouped(&losses, 14, keys);
     let rsi_wilder: Vec<f64> = avg_gain_rma.iter().zip(avg_loss_rma.iter()).map(|(g,l)| if *l==0.0 {100.0} else {100.0 - 100.0/(1.0 + g/l)}).collect();
-    (Series::new("rsi_14_ema", rsi_ema), Series::new("rsi_14_wilder", rsi_wilder))
+    (Series::new(PlSmallStr::from("rsi_14_ema"), rsi_ema), Series::new(PlSmallStr::from("rsi_14_wilder"), rsi_wilder))
 }
 
 fn calc_atr(high: &[f64], low: &[f64], close: &[f64], keys: &[i64]) -> Series {
@@ -142,7 +142,7 @@ fn calc_atr(high: &[f64], low: &[f64], close: &[f64], keys: &[i64]) -> Series {
             tr.push((h - l).max((h - c_prev).abs()).max((l - c_prev).abs()));
         }
     }
-    Series::new("atr_14", rma_grouped(&tr, 14, keys))
+    Series::new(PlSmallStr::from("atr_14"), rma_grouped(&tr, 14, keys))
 }
 
 fn calc_vwap_variants(ts: &[i64], high: &[f64], low: &[f64], close: &[f64], volume: &[f64]) -> (Series, Series, Series) {
@@ -193,7 +193,7 @@ fn calc_vwap_variants(ts: &[i64], high: &[f64], low: &[f64], close: &[f64], volu
         }
     }
 
-    (Series::new("vwap", vwap), Series::new("vwapn", vwapn), Series::new("vwapd", vwapd))
+    (Series::new(PlSmallStr::from("vwap"), vwap), Series::new(PlSmallStr::from("vwapn"), vwapn), Series::new(PlSmallStr::from("vwapd"), vwapd))
 }
 
 /// Run all indicators and append to the DataFrame
