@@ -1,15 +1,8 @@
-mod loader;
-mod resampler;
-mod indicators;
-mod sticher;
-mod storage;
-
-use polars::prelude::*;
-
 use std::fs;
 use anyhow::Result;
 use std::collections::BTreeMap;
-use crate::sticher::{stitch_contracts, ContractWindow};
+use DataLoader::{loader, resampler, indicators, storage, stitcher::ContractWindow};
+use DataLoader::stitcher::stitch_contracts;
 
 fn main() -> Result<()> {
     // --- Define contract rollover windows ---

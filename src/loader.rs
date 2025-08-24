@@ -45,3 +45,27 @@ pub fn load_all_bars_from_folder<P: AsRef<Path>>(folder: P) -> Result<Vec<Bar>> 
 
     Ok(all_bars)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+    use std::io::Write;
+
+    #[test]
+    fn test_load_file() {
+        let bars = load_bars_from_file("raw_data/sample.json").unwrap();
+        assert!(!bars.is_empty());
+    }
+
+    #[test]
+    fn test_load_folder() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("sample.json");
+        let mut file = File::create(&file_path).unwrap();
+        writeln!(file, "{{\"instrument_name\":\"CLZ\",\"instrument_id\":1,\"ts_event\":0,\"open\":1,\"high\":1,\"low\":1,\"close\":1,\"volume\":1}}\n").unwrap();
+        drop(file);
+        let bars = load_all_bars_from_folder(dir.path()).unwrap();
+        assert_eq!(bars.len(), 1);
+    }
+}
