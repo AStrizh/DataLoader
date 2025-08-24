@@ -8,4 +8,9 @@ serde = { version = "1.0.219", features = ["derive"] }
 anyhow = "1.0.98"
 serde_json = "1.0.142"
 chrono = "0.4.41"
-polars = { version = "0.50.0", default-features = false, features = ["lazy", "temporal", "dtype-datetime", "dynamic_group_by","fmt", "polars-io"] }
+polars = { version = "0.40.0", default-features = false, features = ["lazy", "temporal", "dtype-datetime", "dynamic_group_by", "fmt", "parquet"] }
+chrono-tz = "0.8.6"
+rayon = "1.10.0"
+
+[dev-dependencies]
+tempfile = "3.10.1"

@@ -1,6 +1,5 @@
 use crate::loader::Bar;
 use polars::prelude::*;
-use chrono::{NaiveDateTime, Utc};
 use anyhow::Result;
 
 pub fn bars_to_dataframe(bars: &[Bar]) -> Result<DataFrame> {
@@ -30,10 +29,11 @@ pub fn downsample_to_5min(df: &DataFrame) -> Result<DataFrame> {
         .with_column(
             col("timestamp")
                 .cast(DataType::Datetime(TimeUnit::Milliseconds, None))
-                .alias("ts"),
+                .alias("timestamp"),
         )
+        .sort(["timestamp"], SortMultipleOptions::default())
         .group_by_dynamic(
-            col("ts"),
+            col("timestamp"),
             [],
             DynamicGroupOptions {
                 every: Duration::parse("5m"),
@@ -53,8 +53,27 @@ pub fn downsample_to_5min(df: &DataFrame) -> Result<DataFrame> {
             col("close").last().alias("close"),
             col("volume").sum().alias("volume"),
         ])
-        .sort(["ts"], SortMultipleOptions::default())
         .collect()?;
 
     Ok(grouped)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_downsample() {
+        let bars = vec![
+            Bar { instrument_name: "X".into(), instrument_id: 1, ts_event: 0, open: 1, high: 1, low: 1, close: 1, volume: 1 },
+            Bar { instrument_name: "X".into(), instrument_id: 1, ts_event: 60_000_000_000, open: 1, high: 1, low: 1, close: 1, volume: 1 },
+            Bar { instrument_name: "X".into(), instrument_id: 1, ts_event: 120_000_000_000, open: 1, high: 1, low: 1, close: 1, volume: 1 },
+            Bar { instrument_name: "X".into(), instrument_id: 1, ts_event: 180_000_000_000, open: 1, high: 1, low: 1, close: 1, volume: 1 },
+            Bar { instrument_name: "X".into(), instrument_id: 1, ts_event: 240_000_000_000, open: 1, high: 1, low: 1, close: 1, volume: 1 },
+            Bar { instrument_name: "X".into(), instrument_id: 1, ts_event: 300_000_000_000, open: 1, high: 1, low: 1, close: 1, volume: 1 },
+        ];
+        let df = bars_to_dataframe(&bars).unwrap();
+        let down = downsample_to_5min(&df).unwrap();
+        assert_eq!(down.height(), 2);
+    }
 }
