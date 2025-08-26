@@ -97,8 +97,21 @@ fn stitch_from_parquet() -> Result<()> {
         }
 
 
+        // loaded.sort_by_key(|(_, df)| {
+        //     df.column("timestamp")
+        //         .unwrap()
+        //         .i64()
+        //         .unwrap()
+        //         .into_iter()
+        //         .flatten()
+        //         .min()
+        //         .unwrap()
+        // });
+
         loaded.sort_by_key(|(_, df)| {
             df.column("timestamp")
+                .unwrap()
+                .cast(&DataType::Int64)
                 .unwrap()
                 .i64()
                 .unwrap()
@@ -109,8 +122,17 @@ fn stitch_from_parquet() -> Result<()> {
         });
 
         let windows = rollover_windows(&loaded)?;
-        let stitched = stitch_contracts(&windows)?;
-        let out_path = symbol_dir.path().join(format!("{}_stitched.parquet", symbol));
+        let mut stitched = stitch_contracts(&windows)?;
+        
+        stitched.with_column(
+            stitched
+                .column("timestamp")?
+                .cast(&DataType::Datetime(TimeUnit::Milliseconds, None))?,
+        )?;
+        let out_path = symbol_dir
+            .path()
+            .join(format!("{}_stitched.parquet", symbol));
+
         storage::write_parquet(&stitched, out_path.to_str().unwrap())?;
         println!(
             "✅ Wrote stitched data for {} with {} rows",
@@ -124,40 +146,57 @@ fn stitch_from_parquet() -> Result<()> {
 
 /// Determine rollover boundaries between adjacent contracts and build windows
 fn rollover_windows(contracts: &[(String, DataFrame)]) -> Result<Vec<ContractWindow>> {
-    let mut rollover_points: Vec<(TsMs, TsMs)> = Vec::new();
+    let mut rollover_points: Vec<(DateTime<Utc>, DateTime<Utc>)> = Vec::new();
     for pair in contracts.windows(2) {
         let (front_name, front_df) = &pair[0];
         let (back_name, back_df) = &pair[1];
-        let (end_ts, start_ts) = find_volume_rollover(front_df, back_df)?;
+        let (end_dt, start_dt) = find_volume_rollover(front_df, back_df)?;
         let ny = New_York;
-        let end_dt = DateTime::<Utc>::from_timestamp_millis(end_ts).unwrap().with_timezone(&ny);
-        let start_dt = DateTime::<Utc>::from_timestamp_millis(start_ts).unwrap().with_timezone(&ny);
-        println!("Rolling {} -> {} on {} / {}", front_name, back_name, end_dt, start_dt);
-        rollover_points.push((end_ts, start_ts));
+
+        // let end_dt = DateTime::<Utc>::from_timestamp_millis(end_ds).unwrap().with_timezone(&ny);
+        // let start_dt = DateTime::<Utc>::from_timestamp_millis(start_ts).unwrap().with_timezone(&ny);
+        // println!("Rolling {} -> {} on {} / {}", front_name, back_name, end_dt, start_dt);
+        println!(
+            "Rolling {} -> {} on {} / {}",
+            front_name,
+            back_name,
+            end_dt.with_timezone(&ny),
+            start_dt.with_timezone(&ny)
+        );
+        rollover_points.push((end_dt, start_dt));
     }
 
     let mut windows = Vec::new();
     for (idx, (name, df)) in contracts.iter().enumerate() {
-        let start_ts = if idx == 0 {
-            df.column("timestamp")?
+        let start_dt = if idx == 0 {
+            let min_ts = df.column("timestamp")?
+                .cast(&DataType::Int64)?
                 .i64()?
                 .into_iter()
                 .flatten()
                 .min()
-                .unwrap()
+                .unwrap();
+            DateTime::<Utc>::from_timestamp_millis(min_ts).unwrap()
         } else {
             rollover_points[idx - 1].1
         };
-        let end_ts = if idx == contracts.len() - 1 {
-            i64::MAX
+        let end_dt = if idx == contracts.len() - 1 {
+            let max_ts = df.column("timestamp")?
+                .cast(&DataType::Int64)?
+                .i64()?
+                .into_iter()
+                .flatten()
+                .max()
+                .unwrap() + 1;
+            DateTime::<Utc>::from_timestamp_millis(max_ts).unwrap()
         } else {
             rollover_points[idx].0
         };
         windows.push(ContractWindow {
             name: name.clone(),
             df: df.clone(),
-            start_ts,
-            end_ts,
+            start: start_dt,
+            end: end_dt,
         });
     }
     Ok(windows)
@@ -165,7 +204,7 @@ fn rollover_windows(contracts: &[(String, DataFrame)]) -> Result<Vec<ContractWin
 
 
 /// Identify volume crossover and return Friday close/Sunday open timestamps in ms UTC
-fn find_volume_rollover(front: &DataFrame, back: &DataFrame) -> Result<(TsMs, TsMs)> {
+fn find_volume_rollover(front: &DataFrame, back: &DataFrame) -> Result<(DateTime<Utc>, DateTime<Utc>)> {
     // Use last 1500 bars of front and first 1500 bars of back
     let front_slice = front.select(["timestamp", "volume"])?.tail(Some(1500));
     let back_slice = back.select(["timestamp", "volume"])?.head(Some(1500));
@@ -217,5 +256,5 @@ fn find_volume_rollover(front: &DataFrame, back: &DataFrame) -> Result<(TsMs, Ts
     let friday_utc = tz.from_local_datetime(&friday_close_local).unwrap().with_timezone(&Utc);
     let sunday_utc = tz.from_local_datetime(&sunday_open_local).unwrap().with_timezone(&Utc);
 
-    Ok((friday_utc.timestamp_millis(), sunday_utc.timestamp_millis()))
+    Ok((friday_utc, sunday_utc))
 }
