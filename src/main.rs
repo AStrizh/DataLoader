@@ -1,6 +1,5 @@
 use std::fs;
 use anyhow::Result;
-use std::collections::BTreeMap;
 use std::path::Path;
 use DataLoader::{loader, resampler, indicators, storage, stitcher::ContractWindow};
 use DataLoader::stitcher::stitch_contracts;
@@ -11,13 +10,15 @@ use chrono_tz::America::New_York;
 type TsMs = i64;
 const RAW_DIR: &str = "raw_data";
 const PARQUET_DIR: &str = "parquet_data";
+const TIMEFRAME: &str = "1m";  // Change to "15m", "1h", etc. as needed
+const SYMBOL_FILTER: Option<&str> = Some("CL");  // Some("NQ") to process only NQ, None for all symbols
 
 
 
 fn main() -> Result<()> {
 
     // --- Toggle these two lines as needed ---
-    //process_and_save_all_contracts()?; // Step 1
+    process_and_save_all_contracts()?; // Step 1
     stitch_from_parquet()?;            // Step 2
 
     Ok(())
@@ -32,6 +33,14 @@ fn process_and_save_all_contracts() -> Result<()> {
             continue;
         }
         let symbol = symbol_dir.file_name().to_string_lossy().to_string();
+        
+        // Skip if symbol filter is set and doesn't match
+        if let Some(filter) = SYMBOL_FILTER {
+            if symbol != filter {
+                continue;
+            }
+        }
+        
         let out_dir = Path::new(PARQUET_DIR).join(&symbol);
         fs::create_dir_all(&out_dir)?;
 
@@ -42,17 +51,18 @@ fn process_and_save_all_contracts() -> Result<()> {
                 let file_stem = path.file_stem().unwrap().to_string_lossy().to_string();
 
 
-                println!("Processing {}/{}", symbol, file_stem);
+                println!("Processing {}/{} (timeframe: {})", symbol, file_stem, TIMEFRAME);
 
 
                 let bars = loader::load_bars_from_file(&path)?;
                 let df = resampler::bars_to_dataframe(&bars)?;
-                let mut df_5m = resampler::downsample_to_5min(&df)?;
-                indicators::enrich_indicators(&mut df_5m)?;
+                let mut df_resampled = resampler::downsample(&df, TIMEFRAME)?;
+                indicators::enrich_indicators(&mut df_resampled)?;
 
-
-                let output_path = out_dir.join(format!("{}.parquet", file_stem));
-                storage::write_parquet(&df_5m, output_path.to_str().unwrap())?;
+                // Update filename to reflect actual timeframe
+                let output_name = file_stem.replace("_ohlcv1m", &format!("_ohlcv{}", TIMEFRAME));
+                let output_path = out_dir.join(format!("{}.parquet", output_name));
+                storage::write_parquet(&df_resampled, output_path.to_str().unwrap())?;
 
 
             }
@@ -70,18 +80,29 @@ fn stitch_from_parquet() -> Result<()> {
         let symbol_dir = symbol_dir?;
         if !symbol_dir.file_type()?.is_dir() {
             continue;
-
-
-
         }
         let symbol = symbol_dir.file_name().to_string_lossy().to_string();
+        
+        // Skip if symbol filter is set and doesn't match
+        if let Some(filter) = SYMBOL_FILTER {
+            if symbol != filter {
+                continue;
+            }
+        }
+        
         let mut loaded: Vec<(String, DataFrame)> = Vec::new();
         for file in fs::read_dir(symbol_dir.path())? {
             let file = file?;
             let path = file.path();
             if path.extension().map_or(false, |ext| ext == "parquet") {
                 let stem = path.file_stem().unwrap().to_string_lossy().to_string();
+                // Skip stitched files
                 if stem.ends_with("_stitched") {
+                    continue;
+                }
+                // Only load files matching the current timeframe
+                let expected_suffix = format!("_ohlcv{}", TIMEFRAME);
+                if !stem.ends_with(&expected_suffix) {
                     continue;
                 }
                 let mut df = storage::read_parquet(path.to_str().unwrap())?;
@@ -131,12 +152,13 @@ fn stitch_from_parquet() -> Result<()> {
         )?;
         let out_path = symbol_dir
             .path()
-            .join(format!("{}_stitched.parquet", symbol));
+            .join(format!("{}_{}_stitched.parquet", symbol, TIMEFRAME));
 
         storage::write_parquet(&stitched, out_path.to_str().unwrap())?;
         println!(
-            "✅ Wrote stitched data for {} with {} rows",
+            "✅ Wrote stitched data for {} ({}) with {} rows",
             symbol,
+            TIMEFRAME,
             stitched.height()
         );
     }

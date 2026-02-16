@@ -36,7 +36,7 @@ fn session_start(ts: i64) -> i64 {
 fn night_session_id(ts: i64) -> Option<i64> {
     let dt_et = Utc.timestamp_millis_opt(ts).unwrap().with_timezone(&New_York);
     let hour = dt_et.hour();
-    if hour >= 18 || hour < 8 {
+    if hour >= 18 || hour < 7 {
         let date = if hour >= 18 { dt_et.date_naive() } else { dt_et.date_naive() - Duration::days(1) };
         Some(New_York.with_ymd_and_hms(date.year(), date.month(), date.day(), 18, 0, 0).unwrap().with_timezone(&Utc).timestamp_millis())
     } else {
@@ -47,9 +47,9 @@ fn night_session_id(ts: i64) -> Option<i64> {
 fn day_session_id(ts: i64) -> Option<i64> {
     let dt_et = Utc.timestamp_millis_opt(ts).unwrap().with_timezone(&New_York);
     let hour = dt_et.hour();
-    if (8..17).contains(&hour) {
+    if (7..17).contains(&hour) {
         let date = dt_et.date_naive();
-        Some(New_York.with_ymd_and_hms(date.year(), date.month(), date.day(), 8, 0, 0).unwrap().with_timezone(&Utc).timestamp_millis())
+        Some(New_York.with_ymd_and_hms(date.year(), date.month(), date.day(), 7, 0, 0).unwrap().with_timezone(&Utc).timestamp_millis())
     } else {
         None
     }
@@ -145,6 +145,96 @@ fn calc_atr(high: &[f64], low: &[f64], close: &[f64], keys: &[i64]) -> Series {
     Series::new(PlSmallStr::from("atr_14"), rma_grouped(&tr, 14, keys))
 }
 
+fn calc_efficiency_ratio(close: &[f64], period: usize, keys: &[i64]) -> Series {
+    let len = close.len();
+    let mut out = vec![f64::NAN; len];
+    let mut key = keys[0];
+    let mut buffer: Vec<f64> = Vec::new();
+    
+    for i in 0..len {
+        // Reset on new weekly group
+        if keys[i] != key {
+            key = keys[i];
+            buffer.clear();
+        }
+        
+        buffer.push(close[i]);
+        
+        if buffer.len() >= period + 1 {
+            // Keep only the needed window
+            if buffer.len() > period + 1 {
+                buffer.remove(0);
+            }
+            
+            // Net directional change (numerator)
+            let net_change = (buffer[buffer.len() - 1] - buffer[0]).abs();
+            
+            // Total volatility: sum of absolute bar-to-bar changes (denominator)
+            let mut total_movement = 0.0;
+            for j in 1..buffer.len() {
+                total_movement += (buffer[j] - buffer[j - 1]).abs();
+            }
+            
+            // Efficiency Ratio = net change / total movement
+            out[i] = if total_movement > 0.0 {
+                net_change / total_movement
+            } else {
+                0.0
+            };
+        }
+    }
+    
+    Series::new(PlSmallStr::from("er_10"), out)
+}
+
+fn calc_price_density(high: &[f64], low: &[f64], period: usize, keys: &[i64]) -> Series {
+    let len = high.len();
+    let mut out = vec![f64::NAN; len];
+    let mut key = keys[0];
+    let mut high_buffer: Vec<f64> = Vec::new();
+    let mut low_buffer: Vec<f64> = Vec::new();
+    
+    for i in 0..len {
+        // Reset on new weekly group
+        if keys[i] != key {
+            key = keys[i];
+            high_buffer.clear();
+            low_buffer.clear();
+        }
+        
+        high_buffer.push(high[i]);
+        low_buffer.push(low[i]);
+        
+        if high_buffer.len() >= period {
+            // Keep only the needed window
+            if high_buffer.len() > period {
+                high_buffer.remove(0);
+                low_buffer.remove(0);
+            }
+            
+            // Numerator: Sum of individual bar ranges (High - Low for each bar)
+            let mut sum_ranges = 0.0;
+            for j in 0..high_buffer.len() {
+                sum_ranges += high_buffer[j] - low_buffer[j];
+            }
+            
+            // Denominator: Overall range (max high - min low across all bars)
+            let max_high = high_buffer.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            let min_low = low_buffer.iter().copied().fold(f64::INFINITY, f64::min);
+            let overall_range = max_high - min_low;
+            
+            // Price Density = sum of ranges / overall range
+            out[i] = if overall_range > 0.0 {
+                sum_ranges / overall_range
+            } else {
+                f64::NAN
+            };
+        }
+    }
+    
+    Series::new(PlSmallStr::from("pd_10"), out)
+}
+
 fn calc_vwap_variants(ts: &[i64], high: &[f64], low: &[f64], close: &[f64], volume: &[f64]) -> (Series, Series, Series) {
     let len = close.len();
     let mut vwap = Vec::with_capacity(len);
@@ -210,7 +300,7 @@ pub fn enrich_indicators(df: &mut DataFrame) -> Result<()> {
     let volume: Vec<f64> = df.column("volume")?.f64()?.into_no_null_iter().collect();
     let week_keys: Vec<i64> = ts.iter().map(|&t| week_start(t)).collect();
 
-    let (vwap_cols, (ema_vec, (rsi_cols, atr))) = join(
+    let (vwap_cols, (ema_vec, (rsi_cols, (atr, (er, pd))))) = join(
         || calc_vwap_variants(&ts, &high, &low, &close, &volume),
         || {
             join(
@@ -218,7 +308,17 @@ pub fn enrich_indicators(df: &mut DataFrame) -> Result<()> {
                 || {
                     join(
                         || calc_rsi(&close, &week_keys),
-                        || calc_atr(&high, &low, &close, &week_keys),
+                        || {
+                            join(
+                                || calc_atr(&high, &low, &close, &week_keys),
+                                || {
+                                    join(
+                                        || calc_efficiency_ratio(&close, 10, &week_keys),
+                                        || calc_price_density(&high, &low, 10, &week_keys),
+                                    )
+                                },
+                            )
+                        },
                     )
                 },
             )
@@ -234,6 +334,8 @@ pub fn enrich_indicators(df: &mut DataFrame) -> Result<()> {
     df.with_column(rsi_ema)?;
     df.with_column(rsi_wilder)?;
     df.with_column(atr)?;
+    df.with_column(er)?;
+    df.with_column(pd)?;
     Ok(())
 }
 
@@ -255,7 +357,7 @@ mod tests {
             "volume" => [100.0;15]
         ).unwrap();
         enrich_indicators(&mut df).unwrap();
-        for col in ["vwap","vwapn","vwapd","ema_9","ema_14","ema_21","rsi_14_ema","rsi_14_wilder","atr_14"] {
+        for col in ["vwap","vwapn","vwapd","ema_9","ema_14","ema_21","rsi_14_ema","rsi_14_wilder","atr_14","er_10","pd_10"] {
             assert!(df.column(col).is_ok(), "missing column {col}");
             assert_eq!(df.height(), df.column(col).unwrap().len());
         }

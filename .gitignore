@@ -1,1 +1,9 @@
 /target
+
+# Local trading datasets (input/output)
+/raw_data/
+/parquet_data/
+
+# IDE metadata
+/.idea/
+*.iml

@@ -22,7 +22,8 @@ pub fn bars_to_dataframe(bars: &[Bar]) -> Result<DataFrame> {
     Ok(df)
 }
 
-pub fn downsample_to_5min(df: &DataFrame) -> Result<DataFrame> {
+/// Downsample DataFrame to specified timeframe using OHLCV aggregation
+pub fn downsample(df: &DataFrame, timeframe: &str) -> Result<DataFrame> {
     let lazy = df.clone().lazy();
 
     let grouped = lazy
@@ -36,8 +37,8 @@ pub fn downsample_to_5min(df: &DataFrame) -> Result<DataFrame> {
             col("timestamp"),
             [],
             DynamicGroupOptions {
-                every: Duration::parse("5m"),
-                period: Duration::parse("5m"),
+                every: Duration::parse(timeframe),
+                period: Duration::parse(timeframe),
                 offset: Duration::parse("0s"),
                 label: Label::Left,
                 include_boundaries: false,
@@ -58,6 +59,11 @@ pub fn downsample_to_5min(df: &DataFrame) -> Result<DataFrame> {
     Ok(grouped)
 }
 
+/// Legacy function for backward compatibility - defaults to 5-minute downsampling
+pub fn downsample_to_5min(df: &DataFrame) -> Result<DataFrame> {
+    downsample(df, "5m")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -73,7 +79,7 @@ mod tests {
             Bar { instrument_name: "X".into(), instrument_id: 1, ts_event: 300_000_000_000, open: 1, high: 1, low: 1, close: 1, volume: 1 },
         ];
         let df = bars_to_dataframe(&bars).unwrap();
-        let down = downsample_to_5min(&df).unwrap();
+        let down = downsample(&df, "5m").unwrap();
         assert_eq!(down.height(), 2);
     }
 }
